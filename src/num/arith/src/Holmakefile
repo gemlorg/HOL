@@ -13,7 +13,9 @@ GenRelNorm.uo: GenRelNorm.sml $(BOOLLIB)
 	$(HOLMOSMLC) -toplevel -c Overlay.ui $<
 
 NumRelNorms.uo: NumRelNorms.sml NumRelNorms.ui GenRelNorm.uo \
-                GenPolyCanon.uo $(BOOLLIB) $(NUMTHY)
+                GenPolyCanon.uo $(BOOLLIB) $(NUMTHY) \
+                $(dprot $(SIGOBJ)/numSyntax.ui) $(dprot $(SIGOBJ)/reduceLib.ui) \
+                $(dprot $(SIGOBJ)/Arbint.ui)
 	$(HOLMOSMLC) -c Overlay.ui GenRelNorm.ui $<
 
 ifdef HOLSELFTESTLEVEL

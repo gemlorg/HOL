@@ -9,7 +9,7 @@ ETDD_DEPS0 = Counter Exn Single_Assignment Standard_Thread Synchronized \
            Thread_Attributes
 ETDD_DEPS = $(patsubst %,$(dprot $(SIGOBJ)/%.ui),$(DD_DEPS0))
 
-TQDD_DEPS0 = Counter Par_Exn
+TQDD_DEPS0 = Counter Inttab Par_Exn
 TQDD_DEPS = $(patsubst %,$(dprot $(SIGOBJ)/%.ui),$(TQDD_DEPS0))
 
 all: $(DEFAULT_TARGETS)
@@ -20,6 +20,9 @@ Event_Timer.uo: Event_Timer.sml Event_Timer.ui $(PORT_DEPS) $(CD_DEPS) $(ETDD_DE
 
 Task_Queue.uo: Task_Queue.sml Task_Queue.ui $(PORT_DEPS) $(TQDD_DEPS)
 	$(HOLMOSMLC) -c $(protect $(SIGOBJ)/Table.ui) $<
+
+# ThreadLocal uses the top-level Thread that ConcIsaLib rebinds.
+ThreadLocal.uo: $(dprot $(SIGOBJ)/ConcIsaLib.ui)
 
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<

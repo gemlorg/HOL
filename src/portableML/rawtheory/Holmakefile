@@ -8,13 +8,16 @@ all: $(DEFAULT_TARGETS)
 theoryfiles.ui: theoryfiles.sig $(dprot $(SIGOBJ)/Table.ui)
 	$(HOLMOSMLC) -c Table.ui $<
 
-theoryfiles.uo: theoryfiles.sml theoryfiles.ui $(dprot $(SIGOBJ)/Table.ui)
+theoryfiles.uo: theoryfiles.sml theoryfiles.ui $(dprot $(SIGOBJ)/Table.ui) \
+                $(dprot $(SIGOBJ)/Symtab.ui)
 	$(HOLMOSMLC) -c Table.ui $<
 
 theorystats.ui: theorystats.sig $(dprot $(SIGOBJ)/Graph.ui) $(dprot $(SIGOBJ)/Table.ui)
 	$(HOLMOSMLC) -c Table.ui Graph.ui $<
 
-theorystats.uo: theorystats.sml theorystats.ui theoryfiles.uo $(dprot $(SIGOBJ)/Graph.ui) $(dprot $(SIGOBJ)/SHA1.uo)
+theorystats.uo: theorystats.sml theorystats.ui theoryfiles.uo $(dprot $(SIGOBJ)/Graph.ui) $(dprot $(SIGOBJ)/SHA1.uo) \
+                $(dprot $(SIGOBJ)/Inttab.ui) $(dprot $(SIGOBJ)/Redblackset.ui) \
+                $(dprot $(SIGOBJ)/Symtab.ui)
 	$(HOLMOSMLC) -c Graph.ui theoryfiles.ui $<
 
 HAVE_MLTON = $(if $(NO_MLTON),,$(which mlton))

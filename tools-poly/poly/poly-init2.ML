@@ -132,44 +132,124 @@ fun checkLoadCase modName files =
                "\" but module is registered as \"" ^ srcBase f ^ "\"")
   end
 
-fun loadUo ps use modName uo =
+(* A module's manifest: the modules its .ui and .uo files list, and the
+   .sig and .sml files they list, in the order listed. *)
+fun readManifest ps modPath =
   let
-    val i = HFS.openIn uo
-    val files =
-      String.tokens (fn c => c = #"\n") (HFS.inputAll i)
-    val _ = HFS.closeIn i
-    val _ = checkLoadCase modName files
-    fun str f = ">" ^ f ^ "< -- " ^ String.concatWith " -- " ps
-    fun loadOne f =
-      (case OS.Path.ext f of
-         SOME "sml" => use f
-       | SOME "sig" => use f
-       | _ => load (uo::ps) use f)
-      handle
-        OS.Path.InvalidArc => die ("Invalid arc exception in loading "^str f)
-      | OS.Path.Path => die ("Path exception in loading "^str f)
-      | OS.SysErr(msg,_) => die ("System error '"^msg^"' in loading "^str f)
-  in
-    List.app loadOne files
-  end
-and load ps use modPath =
-  let
-    val _ = MDBG (fn _ => "Call load " ^ modPath)
-    val modPath = holpathdb.subst_pathvars modPath
     val modName = OS.Path.file modPath
-    fun l ext =
+    fun str f = ">" ^ f ^ "< -- " ^ String.concatWith " -- " ps
+    fun read ext =
       case findUo (modPath ^ ext) ("."::(!loadPath)) of
           NONE => die ("Cannot find file " ^ modPath ^ ext)
-        | SOME uo => loadUo ps use modName uo
+        | SOME uo =>
+          let
+            val i = HFS.openIn uo
+            val files =
+                String.tokens (fn c => c = #"\n") (HFS.inputAll i)
+            val _ = HFS.closeIn i
+            val _ = checkLoadCase modName files
+            fun isSource f =
+                case OS.Path.ext f of
+                    SOME "sml" => true
+                  | SOME "sig" => true
+                  | _ => false
+                handle OS.Path.InvalidArc =>
+                         die ("Invalid arc exception in loading "^str f)
+                     | OS.Path.Path => die ("Path exception in loading "^str f)
+            val (srcs, deps) = List.partition isSource files
+          in
+            (map (fn d => (uo::ps, holpathdb.subst_pathvars d)) deps, srcs)
+          end
+    val (uideps, uisrcs) = read ".ui"
+    val (uodeps, uosrcs) = read ".uo"
   in
-    if Binaryset.member (!loadedMods, modName) then
-      ()
-    else
-      (loadedMods := Binaryset.add (!loadedMods, modName);
-       (l ".ui"; l ".uo")
-       handle e =>
-              (loadedMods := Binaryset.delete (!loadedMods, modName);
-               PolyML.Exception.reraise e))
+    {deps = uideps @ uodeps, srcs = uisrcs @ uosrcs}
+  end
+  handle e => (
+    maybeWriteStderr ("error in load " ^ modPath ^ " : " ^
+                      General.exnMessage e);
+    PolyML.Exception.reraise e)
+
+(* Loads modPath and the modules it depends on that are not yet loaded.
+   Each step loads, of the modules whose dependencies are all loaded, the
+   one whose name is least.  So a set of modules always loads in the same
+   order, and restricted to the ancestors of any module in it, that order
+   is the order loading that module alone gives.  The order matters
+   because loading a theory registers things (cv_trans translations,
+   compset entries, overloads) where the last registration wins. *)
+fun load ps use modPath =
+  let
+    val _ = MDBG (fn _ => "Call load " ^ modPath)
+    fun loaded m = Binaryset.member (!loadedMods, m)
+    (* the manifests of every module still to load, by module name *)
+    fun collect (plan, []) = plan
+      | collect (plan, (ps, path) :: rest) =
+        let val m = OS.Path.file path
+        in
+          if loaded m orelse isSome (Binarymap.peek (plan, m)) then
+            collect (plan, rest)
+          else
+            let val {deps, srcs} = readManifest ps path
+            in
+              collect (Binarymap.insert (plan, m, (deps, srcs)), deps @ rest)
+            end
+        end
+    val plan = collect (Binarymap.mkDict String.compare,
+                        [(ps, holpathdb.subst_pathvars modPath)])
+    fun planned d = isSome (Binarymap.peek (plan, d))
+    (* A module without a .sig lists itself in its .uo. *)
+    fun depNames m deps =
+        Binaryset.listItems
+          (Binaryset.addList
+             (Binaryset.empty String.compare,
+              List.filter (fn d => d <> m andalso planned d)
+                          (map (OS.Path.file o #2) deps)))
+    (* for each module, how many of its dependencies are still to load,
+       and which modules depend on it *)
+    val (waiting, dependents) =
+        Binarymap.foldl
+          (fn (m, (deps, _), (w, ds)) =>
+              let val dns = depNames m deps
+                  fun addDependent (d, ds) =
+                      Binarymap.insert
+                        (ds, d, m :: getOpt (Binarymap.peek (ds, d), []))
+              in
+                (Binarymap.insert (w, m, length dns),
+                 List.foldl addDependent ds dns)
+              end)
+          (Binarymap.mkDict String.compare, Binarymap.mkDict String.compare)
+          plan
+    fun least s = Binaryset.foldr (fn (x, _) => SOME x) NONE s
+    fun useSrc f =
+        use f handle OS.SysErr (msg, _) =>
+                     die ("System error '" ^ msg ^ "' in loading " ^ f)
+    fun step (waiting, ready) =
+        case least ready of
+            SOME m =>
+            let
+              val _ = List.app useSrc (#2 (Binarymap.find (plan, m)))
+              val _ = loadedMods := Binaryset.add (!loadedMods, m)
+              fun release (d, (w, r)) =
+                  let val n = Binarymap.find (w, d) - 1
+                  in
+                    (Binarymap.insert (w, d, n),
+                     if n = 0 then Binaryset.add (r, d) else r)
+                  end
+            in
+              step (List.foldl release
+                      (waiting, Binaryset.delete (ready, m))
+                      (getOpt (Binarymap.peek (dependents, m), [])))
+            end
+          | NONE =>
+            case List.filter (not o loaded) (map #1 (Binarymap.listItems plan))
+             of [] => ()
+              | stuck => die ("Dependency cycle among " ^
+                              String.concatWith ", " stuck)
+    val ready =
+        Binarymap.foldl (fn (m, 0, r) => Binaryset.add (r, m) | (_, _, r) => r)
+                        (Binaryset.empty String.compare) waiting
+  in
+    step (waiting, ready)
   end handle e => (
     maybeWriteStderr("error in load " ^ modPath ^ " : " ^ General.exnMessage e);
     PolyML.Exception.reraise e)
